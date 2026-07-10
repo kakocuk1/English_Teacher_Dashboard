@@ -9,8 +9,9 @@ import (
 
 // Bot represents the Telegram bot structure.
 type Bot struct {
-	api     *tgbotapi.BotAPI
-	service *service.Service
+	api         *tgbotapi.BotAPI
+	service     *service.Service
+	pendingLink int // student ID waiting to be linked to the next /start from a student
 }
 
 // New creates a new instance of the Bot.

@@ -45,6 +45,20 @@ func (b *Bot) handleMessage(message *tgbotapi.Message) {
 		b.handleGetSchedule(message)
 	case "add_lesson":
 		b.handleAddLesson(message)
+	case "link_student":
+		b.handleLinkStudent(message)
+	case "set_price":
+		b.handleSetPrice(message)
+	case "add_package":
+		b.handleAddPackage(message)
+	case "lesson_done":
+		b.handleLessonDone(message)
+	case "balance":
+		b.handleBalance(message)
+	case "my_homeworks":
+		b.handleMyHomeworks(message)
+	case "my_lessons":
+		b.handleMyLessons(message)
 	default:
 		b.send(message.Chat.ID, fmt.Sprintf("%s Unknown command. Use /start to see all commands.", emojiWarning))
 	}
@@ -67,16 +81,44 @@ handleStart sends the welcome message and the list of available commands.
 This is usually the first command a user sends to the bot: /start.
 */
 func (b *Bot) handleStart(message *tgbotapi.Message) {
+	// if teacher set a pending link — link this user to that student ID
+	if b.pendingLink != 0 {
+		if err := b.service.LinkStudent(b.pendingLink, message.From.ID); err != nil {
+			b.send(message.Chat.ID, fmt.Sprintf("%s Error linking account: %s", emojiError, err.Error()))
+			return
+		}
+		b.send(message.Chat.ID, fmt.Sprintf("%s Your account has been linked! Use /my_homeworks and /my_lessons.", emojiSuccess))
+		b.pendingLink = 0 // reset after successful link
+		return
+	}
+
+	// check if the message is from a linked student
+	student, err := b.service.GetStudentByTelegramID(message.From.ID)
+	if err == nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Welcome, %s!\n\nYour commands:\n/my_homeworks — your homework tasks\n/my_lessons — remaining lessons in your package", emojiStudent, student.Name))
+		return
+	}
+
+	// teacher menu
 	text := fmt.Sprintf(`%s Welcome to Teacher Dashboard!
 
-Commands:
-/students - list of all students
-/add_student Name Level - add a student (e.g. /add_student John Doe B2)
-/homeworks ID - homework for a student by ID
-/add_homework ID Task - add homework (e.g. /add_homework 1 Read unit 5)
-/done ID - mark homework as done
-/schedule - full schedule
-/add_lesson StudentID Day Time - add lesson (e.g. /add_lesson 1 Monday 15:00)`, emojiStudent)
+Teacher commands:
+/students — list of all students
+/add_student Name Level — add a student (e.g. /add_student John Doe B2)
+/link_student StudentID — link next student who writes /start
+/set_price StudentID Price — set lesson price (e.g. /set_price 1 1500)
+/add_package StudentID TotalLessons Price — add paid package (e.g. /add_package 1 8 10000)
+/lesson_done StudentID — mark lesson as conducted
+/balance StudentID — show package balance for a student
+/homeworks ID — homework for a student by ID
+/add_homework ID Task — add homework (e.g. /add_homework 1 Read unit 5)
+/done ID — mark homework as done
+/schedule — full schedule
+/add_lesson StudentID Day Time — add lesson (e.g. /add_lesson 1 Monday 15:00)
+
+Student commands:
+/my_homeworks — see your homework
+/my_lessons — see remaining lessons`, emojiStudent)
 
 	b.send(message.Chat.ID, text)
 }
@@ -291,4 +333,181 @@ func (b *Bot) handleAddLesson(message *tgbotapi.Message) {
 	}
 
 	b.send(message.Chat.ID, fmt.Sprintf("%s Lesson added with ID %d", emojiSuccess, id))
+}
+
+// handleLinkStudent links the next student who writes /start to a student ID.
+// Usage: /link_student StudentID
+func (b *Bot) handleLinkStudent(message *tgbotapi.Message) {
+	studentID, err := strconv.Atoi(strings.TrimSpace(message.CommandArguments()))
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Usage: /link_student StudentID\nExample: /link_student 1", emojiWarning))
+		return
+	}
+
+	b.pendingLink = studentID // remember which student ID to link on next /start
+	b.send(message.Chat.ID, fmt.Sprintf("%s Ready! Now ask the student to write /start to the bot.", emojiInfo))
+}
+
+// handleSetPrice sets the individual lesson price for a student.
+// Usage: /set_price StudentID Price
+func (b *Bot) handleSetPrice(message *tgbotapi.Message) {
+	args := strings.Fields(message.CommandArguments())
+	if len(args) != 2 {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Usage: /set_price StudentID Price\nExample: /set_price 1 1500", emojiWarning))
+		return
+	}
+
+	studentID, err := strconv.Atoi(args[0])
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s StudentID must be a number", emojiError))
+		return
+	}
+
+	price, err := strconv.ParseFloat(args[1], 64)
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Price must be a number", emojiError))
+		return
+	}
+
+	if err := b.service.SetLessonPrice(studentID, price); err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Error setting price: %s", emojiError, err.Error()))
+		return
+	}
+
+	b.send(message.Chat.ID, fmt.Sprintf("%s Price set to %.2f for student ID %d", emojiSuccess, price, studentID))
+}
+
+// handleAddPackage adds a paid lesson package for a student.
+// Usage: /add_package StudentID TotalLessons Price
+func (b *Bot) handleAddPackage(message *tgbotapi.Message) {
+	args := strings.Fields(message.CommandArguments())
+	if len(args) != 3 {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Usage: /add_package StudentID TotalLessons Price\nExample: /add_package 1 8 10000", emojiWarning))
+		return
+	}
+
+	studentID, err := strconv.Atoi(args[0])
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s StudentID must be a number", emojiError))
+		return
+	}
+
+	totalLessons, err := strconv.Atoi(args[1])
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s TotalLessons must be a number", emojiError))
+		return
+	}
+
+	price, err := strconv.ParseFloat(args[2], 64)
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Price must be a number", emojiError))
+		return
+	}
+
+	id, err := b.service.AddLessonPackage(studentID, totalLessons, price)
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Error adding package: %s", emojiError, err.Error()))
+		return
+	}
+
+	b.send(message.Chat.ID, fmt.Sprintf("%s Package of %d lessons added with ID %d", emojiSuccess, totalLessons, id))
+}
+
+// handleLessonDone marks a lesson as conducted for a student.
+// If only 1 lesson remains after this — sends a payment reminder.
+// Usage: /lesson_done StudentID
+func (b *Bot) handleLessonDone(message *tgbotapi.Message) {
+	studentID, err := strconv.Atoi(strings.TrimSpace(message.CommandArguments()))
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Usage: /lesson_done StudentID\nExample: /lesson_done 1", emojiWarning))
+		return
+	}
+
+	remind, err := b.service.ConductLesson(studentID)
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Error: %s", emojiError, err.Error()))
+		return
+	}
+
+	b.send(message.Chat.ID, fmt.Sprintf("%s Lesson marked as conducted for student ID %d", emojiSuccess, studentID))
+
+	if remind {
+		// only 1 lesson left — remind teacher about payment
+		b.send(message.Chat.ID, fmt.Sprintf("%s Reminder: only 1 lesson left in the package for student ID %d. Time to discuss the next payment!", emojiWarning, studentID))
+	}
+}
+
+// handleBalance shows the active package balance for a student.
+// Usage: /balance StudentID
+func (b *Bot) handleBalance(message *tgbotapi.Message) {
+	studentID, err := strconv.Atoi(strings.TrimSpace(message.CommandArguments()))
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Usage: /balance StudentID\nExample: /balance 1", emojiWarning))
+		return
+	}
+
+	pkg, err := b.service.GetActivePackage(studentID)
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s No active package for student ID %d", emojiInfo, studentID))
+		return
+	}
+
+	remaining := pkg.TotalLessons - pkg.UsedLessons
+	b.send(message.Chat.ID, fmt.Sprintf(
+		"%s Balance for student ID %d:\nPackage: %d lessons\nUsed: %d\nRemaining: %d\nPrice paid: %.2f",
+		emojiInfo, studentID, pkg.TotalLessons, pkg.UsedLessons, remaining, pkg.Price,
+	))
+}
+
+// handleMyHomeworks shows homework tasks for the student who sent the command.
+func (b *Bot) handleMyHomeworks(message *tgbotapi.Message) {
+	student, err := b.service.GetStudentByTelegramID(message.From.ID)
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s You are not linked to any student. Ask your teacher to link your account.", emojiError))
+		return
+	}
+
+	homeworks, err := b.service.GetHomeworksByStudent(student.ID)
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Error getting homeworks: %s", emojiError, err.Error()))
+		return
+	}
+
+	if len(homeworks) == 0 {
+		b.send(message.Chat.ID, fmt.Sprintf("%s No homework yet!", emojiInfo))
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%s Your homeworks:\n\n", emojiBook))
+	for _, hw := range homeworks {
+		status := emojiCross
+		if hw.Done {
+			status = emojiCheck
+		}
+		sb.WriteString(fmt.Sprintf("%s %s (added: %s)\n", status, hw.Task, hw.CreatedAt))
+	}
+
+	b.send(message.Chat.ID, sb.String())
+}
+
+// handleMyLessons shows the remaining lessons in the active package for the student.
+func (b *Bot) handleMyLessons(message *tgbotapi.Message) {
+	student, err := b.service.GetStudentByTelegramID(message.From.ID)
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s You are not linked to any student. Ask your teacher to link your account.", emojiError))
+		return
+	}
+
+	pkg, err := b.service.GetActivePackage(student.ID)
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s No active lesson package. Contact your teacher.", emojiInfo))
+		return
+	}
+
+	remaining := pkg.TotalLessons - pkg.UsedLessons
+	b.send(message.Chat.ID, fmt.Sprintf(
+		"%s Remaining lessons: %d out of %d",
+		emojiCalendar, remaining, pkg.TotalLessons,
+	))
 }
