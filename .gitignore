@@ -1,0 +1,8 @@
+# database file with student data
+*.db
+
+# environment variables file
+.env
+
+# Go build output
+/bin/

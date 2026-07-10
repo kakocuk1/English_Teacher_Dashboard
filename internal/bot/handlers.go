@@ -1,0 +1,294 @@
+﻿package bot
+
+import (
+	"fmt"
+	"log"
+	"strconv"
+	"strings"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/kakocuk1/teacher-dashboard/internal/service"
+)
+
+const (
+	emojiCheck    = "\u2705"
+	emojiCross    = "\u274c"
+	emojiBook     = "\U0001f4da"
+	emojiStudent  = "\U0001f468\u200d\U0001f393"
+	emojiCalendar = "\U0001f4c5"
+	emojiWarning  = "\u26a0\ufe0f"
+	emojiSuccess  = "\U0001f389"
+	emojiError    = "\U0001f6ab"
+	emojiInfo     = "\u2139\ufe0f"
+)
+
+/*
+handleMessage is the main router for Telegram commands.
+It reads the command from the incoming message and calls the correct handler.
+If the command is unknown, it sends a short help message to the user.
+*/
+func (b *Bot) handleMessage(message *tgbotapi.Message) {
+	switch message.Command() {
+	case "start":
+		b.handleStart(message)
+	case "add_student":
+		b.handleAddStudent(message)
+	case "students":
+		b.handleGetStudents(message)
+	case "add_homework":
+		b.handleAddHomework(message)
+	case "homeworks":
+		b.handleGetHomeworks(message)
+	case "done":
+		b.handleMarkDone(message)
+	case "schedule":
+		b.handleGetSchedule(message)
+	case "add_lesson":
+		b.handleAddLesson(message)
+	default:
+		b.send(message.Chat.ID, fmt.Sprintf("%s Unknown command. Use /start to see all commands.", emojiWarning))
+	}
+}
+
+/*
+send is a small helper for sending text messages.
+It creates a Telegram message object and sends it through the bot API.
+If Telegram returns an error, the error is written to the application log.
+*/
+func (b *Bot) send(chatID int64, text string) {
+	msg := tgbotapi.NewMessage(chatID, text)
+	if _, err := b.api.Send(msg); err != nil {
+		log.Printf("error sending message: %v", err)
+	}
+}
+
+/*
+handleStart sends the welcome message and the list of available commands.
+This is usually the first command a user sends to the bot: /start.
+*/
+func (b *Bot) handleStart(message *tgbotapi.Message) {
+	text := fmt.Sprintf(`%s Welcome to Teacher Dashboard!
+
+Commands:
+/students - list of all students
+/add_student Name Level - add a student (e.g. /add_student John Doe B2)
+/homeworks ID - homework for a student by ID
+/add_homework ID Task - add homework (e.g. /add_homework 1 Read unit 5)
+/done ID - mark homework as done
+/schedule - full schedule
+/add_lesson StudentID Day Time - add lesson (e.g. /add_lesson 1 Monday 15:00)`, emojiStudent)
+
+	b.send(message.Chat.ID, text)
+}
+
+/*
+handleAddStudent creates a new student from the /add_student command.
+The expected format is: /add_student Name Level.
+The last word is used as the level, and everything before it is used as the name.
+Example: /add_student John Doe B2 -> name = "John Doe", level = "B2".
+*/
+func (b *Bot) handleAddStudent(message *tgbotapi.Message) {
+	args := strings.Fields(message.CommandArguments())
+	if len(args) < 2 {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Usage: /add_student Name Level\nExample: /add_student John Doe B2", emojiWarning))
+		return
+	}
+
+	level := strings.ToUpper(args[len(args)-1])
+	name := strings.Join(args[:len(args)-1], " ")
+
+	if !service.IsValidLevel(level) {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Invalid level. Use one of: A1, A2, B1, B2, C1, C2", emojiError))
+		return
+	}
+
+	id, err := b.service.AddStudent(name, level)
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Error adding student: %s", emojiError, err.Error()))
+		return
+	}
+
+	b.send(message.Chat.ID, fmt.Sprintf("%s Student %s (%s) added with ID %d", emojiSuccess, name, level, id))
+}
+
+/*
+handleGetStudents shows all students saved in the system.
+It asks the service layer for the student list and formats the result as text.
+If there are no students yet, it tells the user how to add one.
+*/
+func (b *Bot) handleGetStudents(message *tgbotapi.Message) {
+	students, err := b.service.GetStudents()
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Error getting students: %s", emojiError, err.Error()))
+		return
+	}
+
+	if len(students) == 0 {
+		b.send(message.Chat.ID, fmt.Sprintf("%s No students yet. Add one with /add_student", emojiInfo))
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%s Students:\n\n", emojiStudent))
+	for _, s := range students {
+		sb.WriteString(fmt.Sprintf("ID %d - %s (%s)\n", s.ID, s.Name, s.Level))
+	}
+
+	b.send(message.Chat.ID, sb.String())
+}
+
+/*
+handleAddHomework creates a new homework task for a student.
+The expected format is: /add_homework StudentID Task.
+SplitN is used because the task can contain spaces.
+Example: /add_homework 1 Read unit 5.
+*/
+func (b *Bot) handleAddHomework(message *tgbotapi.Message) {
+	args := strings.SplitN(message.CommandArguments(), " ", 2)
+	if len(args) < 2 {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Usage: /add_homework StudentID Task\nExample: /add_homework 1 Read unit 5", emojiWarning))
+		return
+	}
+
+	studentID, err := strconv.Atoi(args[0])
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s StudentID must be a number", emojiError))
+		return
+	}
+
+	task := strings.TrimSpace(args[1])
+	if task == "" {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Homework task cannot be empty", emojiError))
+		return
+	}
+
+	id, err := b.service.AddHomework(studentID, task)
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Error adding homework: %s", emojiError, err.Error()))
+		return
+	}
+
+	b.send(message.Chat.ID, fmt.Sprintf("%s Homework added with ID %d", emojiSuccess, id))
+}
+
+/*
+handleGetHomeworks shows all homework tasks for one student.
+The command must contain a student ID: /homeworks StudentID.
+Each homework item is printed with its ID, status, task text, and creation date.
+*/
+func (b *Bot) handleGetHomeworks(message *tgbotapi.Message) {
+	studentID, err := strconv.Atoi(strings.TrimSpace(message.CommandArguments()))
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Usage: /homeworks StudentID\nExample: /homeworks 1", emojiWarning))
+		return
+	}
+
+	homeworks, err := b.service.GetHomeworksByStudent(studentID)
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Error getting homeworks: %s", emojiError, err.Error()))
+		return
+	}
+
+	if len(homeworks) == 0 {
+		b.send(message.Chat.ID, fmt.Sprintf("%s No homeworks for this student yet.", emojiInfo))
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%s Homeworks:\n\n", emojiBook))
+	for _, hw := range homeworks {
+		status := emojiCross
+		if hw.Done {
+			status = emojiCheck
+		}
+		sb.WriteString(fmt.Sprintf("ID %d - %s - %s (added: %s)\n", hw.ID, status, hw.Task, hw.CreatedAt))
+	}
+
+	b.send(message.Chat.ID, sb.String())
+}
+
+/*
+handleMarkDone marks one homework task as completed.
+The command must contain a homework ID: /done HomeworkID.
+The real update is done in the service layer.
+*/
+func (b *Bot) handleMarkDone(message *tgbotapi.Message) {
+	homeworkID, err := strconv.Atoi(strings.TrimSpace(message.CommandArguments()))
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Usage: /done HomeworkID\nExample: /done 1", emojiWarning))
+		return
+	}
+
+	if err := b.service.MarkHomeworkDone(homeworkID); err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Error marking homework as done: %s", emojiError, err.Error()))
+		return
+	}
+
+	b.send(message.Chat.ID, fmt.Sprintf("%s Homework marked as done!", emojiCheck))
+}
+
+/*
+handleGetSchedule shows the full lesson schedule.
+It gets all lessons from the service layer and formats them for Telegram.
+If there are no lessons yet, it tells the user how to add one.
+*/
+func (b *Bot) handleGetSchedule(message *tgbotapi.Message) {
+	lessons, err := b.service.GetAllLessons()
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Error getting schedule: %s", emojiError, err.Error()))
+		return
+	}
+
+	if len(lessons) == 0 {
+		b.send(message.Chat.ID, fmt.Sprintf("%s No lessons yet. Add one with /add_lesson", emojiInfo))
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%s Schedule:\n\n", emojiCalendar))
+	for _, l := range lessons {
+		sb.WriteString(fmt.Sprintf("%s %s - Student ID %d\n", l.DayOfWeek, l.Time, l.StudentID))
+	}
+
+	b.send(message.Chat.ID, sb.String())
+}
+
+/*
+handleAddLesson adds a new lesson to the schedule.
+The expected format is: /add_lesson StudentID Day Time.
+Example: /add_lesson 1 Monday 15:00.
+*/
+func (b *Bot) handleAddLesson(message *tgbotapi.Message) {
+	args := strings.Fields(message.CommandArguments())
+	if len(args) != 3 {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Usage: /add_lesson StudentID Day Time\nExample: /add_lesson 1 Monday 15:00", emojiWarning))
+		return
+	}
+
+	studentID, err := strconv.Atoi(args[0])
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s StudentID must be a number", emojiError))
+		return
+	}
+
+	day := service.NormalizeDay(args[1])
+	lessonTime := args[2]
+
+	if !service.IsValidDay(day) {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Invalid day. Use: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday", emojiError))
+		return
+	}
+
+	if !service.IsValidLessonTime(lessonTime) {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Invalid time format. Use HH:MM, for example 15:00", emojiError))
+		return
+	}
+
+	id, err := b.service.AddLesson(studentID, day, lessonTime)
+	if err != nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Error adding lesson: %s", emojiError, err.Error()))
+		return
+	}
+
+	b.send(message.Chat.ID, fmt.Sprintf("%s Lesson added with ID %d", emojiSuccess, id))
+}
