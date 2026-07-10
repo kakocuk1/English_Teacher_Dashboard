@@ -9,19 +9,21 @@ import (
 type Bot struct {
 	api         *tgbotapi.BotAPI
 	service     *service.Service
-	pendingLink int // student ID waiting to be linked to the next /start from a student
+	pendingLink int   // student ID waiting to be linked to the next /start from a student
+	teacherID   int64 // only this user can use teacher commands
 }
 
 // New creates a new instance of the Bot.
-func New(token string, service *service.Service) (*Bot, error) {
+func New(token string, service *service.Service, teacherID int64) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Bot{
-		api:     api,
-		service: service,
+		api:       api,
+		service:   service,
+		teacherID: teacherID,
 	}, nil
 }
 
@@ -42,4 +44,9 @@ func (b *Bot) Run() {
 			b.handleCallback(update.CallbackQuery)
 		}
 	}
+}
+
+// isTeacher checks if the message is from the teacher.
+func (b *Bot) isTeacher(message *tgbotapi.Message) bool {
+	return message.From.ID == b.teacherID
 }

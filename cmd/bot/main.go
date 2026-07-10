@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"strconv"
 
 	"github.com/kakocuk1/teacher-dashboard/internal/bot"
 	"github.com/kakocuk1/teacher-dashboard/internal/service"
@@ -10,31 +11,31 @@ import (
 )
 
 func main() {
-	// take a token from environment variable, DO NOT SAVE HERE TOKEN
 	token := os.Getenv("TELEGRAM_TOKEN")
 	if token == "" {
 		log.Fatal("TELEGRAM_TOKEN is not set")
 	}
 
-	// Create connection to the database
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		log.Fatal("DATABASE_URL is not set")
 	}
 
-	// connect to PostgreSQL
+	teacherID, err := strconv.ParseInt(os.Getenv("TEACHER_TELEGRAM_ID"), 10, 64)
+	if err != nil || teacherID == 0 {
+		log.Fatal("TEACHER_TELEGRAM_ID is not set or invalid")
+	}
+
 	db, err := storage.New(dsn)
 	if err != nil {
 		log.Fatalf("failed to connect to database: %v", err)
 	}
 
-	// Create a service with business logic
 	svc := service.New(db)
 
-	// Create and start the bot
-	b, err := bot.New(token, svc)
+	b, err := bot.New(token, svc, teacherID)
 	if err != nil {
-		log.Fatalf("Failed to create bot: %v", err)
+		log.Fatalf("failed to create bot: %v", err)
 	}
 
 	log.Println("Bot is running...")

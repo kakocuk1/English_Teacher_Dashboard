@@ -31,6 +31,28 @@ func (b *Bot) handleMessage(message *tgbotapi.Message) {
 	switch message.Command() {
 	case "start":
 		b.handleStart(message)
+	case "my_homeworks", "my_lessons":
+		b.handleStudentCommands(message)
+	default:
+		if !b.isTeacher(message) {
+			b.send(message.Chat.ID, fmt.Sprintf("%s You are not authorized to use this command.", emojiError))
+			return
+		}
+		b.handleTeacherCommands(message)
+	}
+}
+
+func (b *Bot) handleStudentCommands(message *tgbotapi.Message) {
+	switch message.Command() {
+	case "my_homeworks":
+		b.handleMyHomeworks(message)
+	case "my_lessons":
+		b.handleMyLessons(message)
+	}
+}
+
+func (b *Bot) handleTeacherCommands(message *tgbotapi.Message) {
+	switch message.Command() {
 	case "add_student":
 		b.handleAddStudent(message)
 	case "students":
@@ -55,10 +77,6 @@ func (b *Bot) handleMessage(message *tgbotapi.Message) {
 		b.handleLessonDone(message)
 	case "balance":
 		b.handleBalance(message)
-	case "my_homeworks":
-		b.handleMyHomeworks(message)
-	case "my_lessons":
-		b.handleMyLessons(message)
 	default:
 		b.send(message.Chat.ID, fmt.Sprintf("%s Unknown command. Use /start to see all commands.", emojiWarning))
 	}
