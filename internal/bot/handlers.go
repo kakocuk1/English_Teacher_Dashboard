@@ -128,46 +128,46 @@ handleStart sends the welcome message and the list of available commands.
 This is usually the first command a user sends to the bot: /start.
 */
 func (b *Bot) handleStart(message *tgbotapi.Message) {
-	// if teacher set a pending link — link this user to that student ID
-	if b.pendingLink != 0 {
+	// pending link — linking a student account
+	if b.pendingLink != 0 && !b.isTeacher(message) {
 		if err := b.service.LinkStudent(b.pendingLink, message.From.ID); err != nil {
 			b.send(message.Chat.ID, fmt.Sprintf("%s Error linking account: %s", emojiError, err.Error()))
 			return
 		}
 		b.send(message.Chat.ID, fmt.Sprintf("%s Your account has been linked! Use /my_homeworks and /my_lessons.", emojiSuccess))
-		b.pendingLink = 0 // reset after successful link
-		return
-	}
-
-	// check if the message is from a linked student
-	student, err := b.service.GetStudentByTelegramID(message.From.ID)
-	if err == nil {
-		b.send(message.Chat.ID, fmt.Sprintf("%s Welcome, %s!\n\nYour commands:\n/my_homeworks — your homework tasks\n/my_lessons — remaining lessons in your package", emojiStudent, student.Name))
+		b.pendingLink = 0
 		return
 	}
 
 	// teacher menu
-	text := fmt.Sprintf(`%s Welcome to Teacher Dashboard!
+	if b.isTeacher(message) {
+		text := fmt.Sprintf(`%s Teacher Dashboard
 
-Teacher commands:
 /students — list of all students
-/add_student Name Level — add a student (e.g. /add_student John Doe B2)
+/add_student Name Level — add a student
 /link_student StudentID — link next student who writes /start
-/set_price StudentID Price — set lesson price (e.g. /set_price 1 1500)
-/add_package StudentID TotalLessons Price — add paid package (e.g. /add_package 1 8 10000)
+/set_price StudentID Price — set lesson price
+/add_package StudentID Lessons Price — add paid package
 /lesson_done StudentID — mark lesson as conducted
-/balance StudentID — show package balance for a student
-/homeworks ID — homework for a student by ID
-/add_homework ID Task — add homework (e.g. /add_homework 1 Read unit 5)
-/done ID — mark homework as done
-/schedule — full schedule
-/add_lesson StudentID Day Time — add lesson (e.g. /add_lesson 1 Monday 15:00)
+/balance StudentID — show remaining lessons
+/add_homework StudentID Task — assign homework
+/homeworks StudentID — view student homework
+/done HomeworkID — mark homework as done
+/add_lesson StudentID Day Time — add lesson to schedule
+/schedule — view full schedule`, emojiStudent)
+		b.send(message.Chat.ID, text)
+		return
+	}
 
-Student commands:
-/my_homeworks — see your homework
-/my_lessons — see remaining lessons`, emojiStudent)
+	// linked student menu
+	student, err := b.service.GetStudentByTelegramID(message.From.ID)
+	if err == nil {
+		b.send(message.Chat.ID, fmt.Sprintf("%s Welcome, %s!\n\n/my_homeworks — your homework\n/my_lessons — remaining lessons", emojiStudent, student.Name))
+		return
+	}
 
-	b.send(message.Chat.ID, text)
+	// unknown user
+	b.send(message.Chat.ID, fmt.Sprintf("%s You are not authorized.", emojiError))
 }
 
 /*
