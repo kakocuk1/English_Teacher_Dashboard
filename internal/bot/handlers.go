@@ -76,6 +76,35 @@ func (b *Bot) send(chatID int64, text string) {
 	}
 }
 
+// sendWithKeyboard sends a message with inline keyboard buttons.
+func (b *Bot) sendWithKeyboard(chatID int64, text string, keyboard tgbotapi.InlineKeyboardMarkup) {
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ReplyMarkup = keyboard
+	if _, err := b.api.Send(msg); err != nil {
+		log.Printf("error sending message with keyboard: %v", err)
+	}
+}
+
+// buildStudentKeyboard builds an inline keyboard with all students as buttons.
+// action is a prefix for callback data, e.g. "lesson_done" or "balance"
+func (b *Bot) buildStudentKeyboard(action string) (tgbotapi.InlineKeyboardMarkup, error) {
+	students, err := b.service.GetStudents()
+	if err != nil {
+		return tgbotapi.InlineKeyboardMarkup{}, err
+	}
+
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, s := range students {
+		button := tgbotapi.NewInlineKeyboardButtonData(
+			fmt.Sprintf("%s (%s)", s.Name, s.Level),
+			fmt.Sprintf("%s:%d", action, s.ID), // callback data: "lesson_done:2"
+		)
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(button))
+	}
+
+	return tgbotapi.NewInlineKeyboardMarkup(rows...), nil
+}
+
 /*
 handleStart sends the welcome message and the list of available commands.
 This is usually the first command a user sends to the bot: /start.
@@ -211,6 +240,12 @@ func (b *Bot) handleAddHomework(message *tgbotapi.Message) {
 	}
 
 	b.send(message.Chat.ID, fmt.Sprintf("%s Homework added with ID %d", emojiSuccess, id))
+
+	// notify the student if their Telegram account is linked
+	student, err := b.service.GetStudentByID(studentID)
+	if err == nil && student.TelegramID != 0 {
+		b.send(student.TelegramID, fmt.Sprintf("%s New homework from your teacher:\n\n%s", emojiBook, task))
+	}
 }
 
 /*
@@ -219,34 +254,13 @@ The command must contain a student ID: /homeworks StudentID.
 Each homework item is printed with its ID, status, task text, and creation date.
 */
 func (b *Bot) handleGetHomeworks(message *tgbotapi.Message) {
-	studentID, err := strconv.Atoi(strings.TrimSpace(message.CommandArguments()))
+	keyboard, err := b.buildStudentKeyboard("homeworks")
 	if err != nil {
-		b.send(message.Chat.ID, fmt.Sprintf("%s Usage: /homeworks StudentID\nExample: /homeworks 1", emojiWarning))
+		b.send(message.Chat.ID, fmt.Sprintf("%s Error getting students: %s", emojiError, err.Error()))
 		return
 	}
 
-	homeworks, err := b.service.GetHomeworksByStudent(studentID)
-	if err != nil {
-		b.send(message.Chat.ID, fmt.Sprintf("%s Error getting homeworks: %s", emojiError, err.Error()))
-		return
-	}
-
-	if len(homeworks) == 0 {
-		b.send(message.Chat.ID, fmt.Sprintf("%s No homeworks for this student yet.", emojiInfo))
-		return
-	}
-
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("%s Homeworks:\n\n", emojiBook))
-	for _, hw := range homeworks {
-		status := emojiCross
-		if hw.Done {
-			status = emojiCheck
-		}
-		sb.WriteString(fmt.Sprintf("ID %d - %s - %s (added: %s)\n", hw.ID, status, hw.Task, hw.CreatedAt))
-	}
-
-	b.send(message.Chat.ID, sb.String())
+	b.sendWithKeyboard(message.Chat.ID, "Select a student:", keyboard)
 }
 
 /*
@@ -417,46 +431,25 @@ func (b *Bot) handleAddPackage(message *tgbotapi.Message) {
 // If only 1 lesson remains after this — sends a payment reminder.
 // Usage: /lesson_done StudentID
 func (b *Bot) handleLessonDone(message *tgbotapi.Message) {
-	studentID, err := strconv.Atoi(strings.TrimSpace(message.CommandArguments()))
+	keyboard, err := b.buildStudentKeyboard("lesson_done")
 	if err != nil {
-		b.send(message.Chat.ID, fmt.Sprintf("%s Usage: /lesson_done StudentID\nExample: /lesson_done 1", emojiWarning))
+		b.send(message.Chat.ID, fmt.Sprintf("%s Error getting students: %s", emojiError, err.Error()))
 		return
 	}
 
-	remind, err := b.service.ConductLesson(studentID)
-	if err != nil {
-		b.send(message.Chat.ID, fmt.Sprintf("%s Error: %s", emojiError, err.Error()))
-		return
-	}
-
-	b.send(message.Chat.ID, fmt.Sprintf("%s Lesson marked as conducted for student ID %d", emojiSuccess, studentID))
-
-	if remind {
-		// only 1 lesson left — remind teacher about payment
-		b.send(message.Chat.ID, fmt.Sprintf("%s Reminder: only 1 lesson left in the package for student ID %d. Time to discuss the next payment!", emojiWarning, studentID))
-	}
+	b.sendWithKeyboard(message.Chat.ID, "Select a student:", keyboard)
 }
 
 // handleBalance shows the active package balance for a student.
 // Usage: /balance StudentID
 func (b *Bot) handleBalance(message *tgbotapi.Message) {
-	studentID, err := strconv.Atoi(strings.TrimSpace(message.CommandArguments()))
+	keyboard, err := b.buildStudentKeyboard("balance")
 	if err != nil {
-		b.send(message.Chat.ID, fmt.Sprintf("%s Usage: /balance StudentID\nExample: /balance 1", emojiWarning))
+		b.send(message.Chat.ID, fmt.Sprintf("%s Error getting students: %s", emojiError, err.Error()))
 		return
 	}
 
-	pkg, err := b.service.GetActivePackage(studentID)
-	if err != nil {
-		b.send(message.Chat.ID, fmt.Sprintf("%s No active package for student ID %d", emojiInfo, studentID))
-		return
-	}
-
-	remaining := pkg.TotalLessons - pkg.UsedLessons
-	b.send(message.Chat.ID, fmt.Sprintf(
-		"%s Balance for student ID %d:\nPackage: %d lessons\nUsed: %d\nRemaining: %d\nPrice paid: %.2f",
-		emojiInfo, studentID, pkg.TotalLessons, pkg.UsedLessons, remaining, pkg.Price,
-	))
+	b.sendWithKeyboard(message.Chat.ID, "Select a student:", keyboard)
 }
 
 // handleMyHomeworks shows homework tasks for the student who sent the command.
@@ -510,4 +503,85 @@ func (b *Bot) handleMyLessons(message *tgbotapi.Message) {
 		"%s Remaining lessons: %d out of %d",
 		emojiCalendar, remaining, pkg.TotalLessons,
 	))
+}
+
+// handleCallback processes inline keyboard button clicks.
+// Callback data format: "action:studentID", e.g. "lesson_done:2"
+func (b *Bot) handleCallback(callback *tgbotapi.CallbackQuery) {
+	// always answer the callback to remove the loading spinner in Telegram
+	b.api.Request(tgbotapi.NewCallback(callback.ID, ""))
+
+	parts := strings.SplitN(callback.Data, ":", 2)
+	if len(parts) != 2 {
+		return
+	}
+
+	action := parts[0]
+	studentID, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return
+	}
+
+	switch action {
+	case "lesson_done":
+		b.callbackLessonDone(callback, studentID)
+	case "balance":
+		b.callbackBalance(callback, studentID)
+	case "homeworks":
+		b.callbackHomeworks(callback, studentID)
+	}
+}
+
+func (b *Bot) callbackLessonDone(callback *tgbotapi.CallbackQuery, studentID int) {
+	remind, err := b.service.ConductLesson(studentID)
+	if err != nil {
+		b.send(callback.Message.Chat.ID, fmt.Sprintf("%s Error: %s", emojiError, err.Error()))
+		return
+	}
+
+	b.send(callback.Message.Chat.ID, fmt.Sprintf("%s Lesson marked as conducted for student ID %d", emojiSuccess, studentID))
+
+	if remind {
+		// only 1 lesson left — remind teacher about payment
+		b.send(callback.Message.Chat.ID, fmt.Sprintf("%s Reminder: only 1 lesson left in the package for student ID %d. Time to discuss the next payment!", emojiWarning, studentID))
+	}
+}
+
+func (b *Bot) callbackBalance(callback *tgbotapi.CallbackQuery, studentID int) {
+	pkg, err := b.service.GetActivePackage(studentID)
+	if err != nil {
+		b.send(callback.Message.Chat.ID, fmt.Sprintf("%s No active package for student ID %d", emojiInfo, studentID))
+		return
+	}
+
+	remaining := pkg.TotalLessons - pkg.UsedLessons
+	b.send(callback.Message.Chat.ID, fmt.Sprintf(
+		"%s Balance for student ID %d:\nPackage: %d lessons\nUsed: %d\nRemaining: %d\nPrice paid: %.2f",
+		emojiInfo, studentID, pkg.TotalLessons, pkg.UsedLessons, remaining, pkg.Price,
+	))
+}
+
+func (b *Bot) callbackHomeworks(callback *tgbotapi.CallbackQuery, studentID int) {
+	homeworks, err := b.service.GetHomeworksByStudent(studentID)
+	if err != nil {
+		b.send(callback.Message.Chat.ID, fmt.Sprintf("%s Error getting homeworks: %s", emojiError, err.Error()))
+		return
+	}
+
+	if len(homeworks) == 0 {
+		b.send(callback.Message.Chat.ID, fmt.Sprintf("%s No homeworks for this student yet.", emojiInfo))
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%s Homeworks:\n\n", emojiBook))
+	for _, hw := range homeworks {
+		status := emojiCross
+		if hw.Done {
+			status = emojiCheck
+		}
+		sb.WriteString(fmt.Sprintf("ID %d - %s - %s (added: %s)\n", hw.ID, status, hw.Task, hw.CreatedAt))
+	}
+
+	b.send(callback.Message.Chat.ID, sb.String())
 }

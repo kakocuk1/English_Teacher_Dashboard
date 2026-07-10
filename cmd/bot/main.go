@@ -17,9 +17,15 @@ func main() {
 	}
 
 	// Create connection to the database
-	db, err := storage.New("teacher.db")
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		log.Fatal("DATABASE_URL is not set")
+	}
+
+	// connect to PostgreSQL
+	db, err := storage.New(dsn)
 	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+		log.Fatalf("failed to connect to database: %v", err)
 	}
 
 	// Create a service with business logic

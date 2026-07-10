@@ -2,30 +2,20 @@ package storage
 
 import "github.com/kakocuk1/teacher-dashboard/internal/model"
 
-// AddLesson adds a new lesson to the storage.
+// AddLesson adds a new lesson to the schedule.
 func (s *Storage) AddLesson(studentID int, dayOfWeek, lessonTime string) (int, error) {
-	result, err := s.db.Exec(
-		"INSERT INTO lessons (student_id, day_of_week, time) VALUES (?, ?, ?)",
-		studentID,
-		dayOfWeek,
-		lessonTime,
-	)
-	if err != nil {
-		return 0, err
-	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return 0, err
-	}
-
-	return int(id), nil
+	var id int
+	err := s.db.QueryRow(
+		"INSERT INTO lessons (student_id, day_of_week, time) VALUES ($1, $2, $3) RETURNING id",
+		studentID, dayOfWeek, lessonTime,
+	).Scan(&id)
+	return id, err
 }
 
-// GetLessonsByStudent retrieves all lessons for a given student.
+// GetLessonsByStudent returns all lessons for a student.
 func (s *Storage) GetLessonsByStudent(studentID int) ([]model.Lesson, error) {
 	rows, err := s.db.Query(
-		"SELECT id, student_id, day_of_week, time FROM lessons WHERE student_id = ?",
+		"SELECT id, student_id, day_of_week, time FROM lessons WHERE student_id = $1",
 		studentID,
 	)
 	if err != nil {
@@ -34,9 +24,8 @@ func (s *Storage) GetLessonsByStudent(studentID int) ([]model.Lesson, error) {
 	defer rows.Close()
 
 	var lessons []model.Lesson
-
 	for rows.Next() {
-		var l model.Lesson // l=Lesson
+		var l model.Lesson
 		if err := rows.Scan(&l.ID, &l.StudentID, &l.DayOfWeek, &l.Time); err != nil {
 			return nil, err
 		}
@@ -46,7 +35,7 @@ func (s *Storage) GetLessonsByStudent(studentID int) ([]model.Lesson, error) {
 	return lessons, nil
 }
 
-// GetAllLessons retrieves all lessons from the storage.
+// GetAllLessons returns the full schedule sorted by day and time.
 func (s *Storage) GetAllLessons() ([]model.Lesson, error) {
 	rows, err := s.db.Query(
 		"SELECT id, student_id, day_of_week, time FROM lessons ORDER BY day_of_week, time",
@@ -57,7 +46,6 @@ func (s *Storage) GetAllLessons() ([]model.Lesson, error) {
 	defer rows.Close()
 
 	var lessons []model.Lesson
-
 	for rows.Next() {
 		var l model.Lesson
 		if err := rows.Scan(&l.ID, &l.StudentID, &l.DayOfWeek, &l.Time); err != nil {
@@ -65,14 +53,12 @@ func (s *Storage) GetAllLessons() ([]model.Lesson, error) {
 		}
 		lessons = append(lessons, l)
 	}
+
 	return lessons, nil
 }
 
-// DeleteLesson deletes a lesson by its ID.
+// DeleteLesson deletes a lesson from the schedule by ID.
 func (s *Storage) DeleteLesson(lessonID int) error {
-	_, err := s.db.Exec(
-		"DELETE FROM lessons WHERE id = ?",
-		lessonID,
-	)
+	_, err := s.db.Exec("DELETE FROM lessons WHERE id = $1", lessonID)
 	return err
 }

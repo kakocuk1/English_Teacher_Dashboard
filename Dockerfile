@@ -16,4 +16,5 @@ WORKDIR /app
 
 COPY --from=builder /app/teacher-dashboard .
 
+# DATABASE_URL and TELEGRAM_TOKEN are passed at runtime via environment variables
 CMD ["./teacher-dashboard"]

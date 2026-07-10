@@ -5,18 +5,16 @@ import "github.com/kakocuk1/teacher-dashboard/internal/model"
 // LinkStudent links a Telegram user ID to a student by student ID.
 func (s *Storage) LinkStudent(studentID int, telegramID int64) error {
 	_, err := s.db.Exec(
-		`UPDATE students SET telegram_id = ? WHERE id = ?`,
-		telegramID,
-		studentID,
+		"UPDATE students SET telegram_id = $1 WHERE id = $2",
+		telegramID, studentID,
 	)
 	return err
 }
 
 // GetStudentByTelegramID finds a student by their Telegram user ID.
-// Used when a student sends a message to the bot.
 func (s *Storage) GetStudentByTelegramID(telegramID int64) (*model.Student, error) {
 	row := s.db.QueryRow(
-		`SELECT id, name, level, telegram_id, lesson_price FROM students WHERE telegram_id = ?`,
+		"SELECT id, name, level, telegram_id, lesson_price FROM students WHERE telegram_id = $1",
 		telegramID,
 	)
 
@@ -32,9 +30,8 @@ func (s *Storage) GetStudentByTelegramID(telegramID int64) (*model.Student, erro
 // SetLessonPrice sets the individual lesson price for a student.
 func (s *Storage) SetLessonPrice(studentID int, price float64) error {
 	_, err := s.db.Exec(
-		`UPDATE students SET lesson_price = ? WHERE id = ?`,
-		price,
-		studentID,
+		"UPDATE students SET lesson_price = $1 WHERE id = $2",
+		price, studentID,
 	)
 	return err
 }

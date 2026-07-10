@@ -8,33 +8,24 @@ import (
 
 // AddLessonPackage adds a new paid lesson package for a student.
 func (s *Storage) AddLessonPackage(studentID, totalLessons int, price float64) (int, error) {
-	result, err := s.db.Exec(
+	var id int
+	err := s.db.QueryRow(
 		`INSERT INTO lesson_packages (student_id, total_lessons, used_lessons, price, created_at)
-		VALUES (?, ?, 0, ?, ?)`,
+		VALUES ($1, $2, 0, $3, $4) RETURNING id`,
 		studentID,
 		totalLessons,
 		price,
 		time.Now().Format("02-01-2006"),
-	)
-	if err != nil {
-		return 0, err
-	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return 0, err
-	}
-
-	return int(id), nil
+	).Scan(&id)
+	return id, err
 }
 
 // GetActivePackage returns the current active package for a student.
-// Active means it still has lessons remaining.
 func (s *Storage) GetActivePackage(studentID int) (*model.LessonPackage, error) {
 	row := s.db.QueryRow(
 		`SELECT id, student_id, total_lessons, used_lessons, price, created_at
 		FROM lesson_packages
-		WHERE student_id = ? AND used_lessons < total_lessons
+		WHERE student_id = $1 AND used_lessons < total_lessons
 		ORDER BY created_at ASC
 		LIMIT 1`,
 		studentID,
@@ -54,7 +45,7 @@ func (s *Storage) GetAllPackages(studentID int) ([]model.LessonPackage, error) {
 	rows, err := s.db.Query(
 		`SELECT id, student_id, total_lessons, used_lessons, price, created_at
 		FROM lesson_packages
-		WHERE student_id = ?
+		WHERE student_id = $1
 		ORDER BY created_at DESC`,
 		studentID,
 	)
@@ -83,7 +74,7 @@ func (s *Storage) MarkLessonConducted(studentID, packageID int) error {
 	}
 
 	_, err = tx.Exec(
-		`INSERT INTO lesson_log (student_id, package_id, conducted_at) VALUES (?, ?, ?)`,
+		"INSERT INTO lesson_log (student_id, package_id, conducted_at) VALUES ($1, $2, $3)",
 		studentID,
 		packageID,
 		time.Now().Format("02-01-2006"),
@@ -94,7 +85,7 @@ func (s *Storage) MarkLessonConducted(studentID, packageID int) error {
 	}
 
 	_, err = tx.Exec(
-		`UPDATE lesson_packages SET used_lessons = used_lessons + 1 WHERE id = ?`,
+		"UPDATE lesson_packages SET used_lessons = used_lessons + 1 WHERE id = $1",
 		packageID,
 	)
 	if err != nil {

@@ -1,8 +1,6 @@
 package bot
 
 import (
-	"log"
-
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/kakocuk1/teacher-dashboard/internal/service"
 )
@@ -34,15 +32,14 @@ func (b *Bot) Run() {
 	updates := b.api.GetUpdatesChan(u)
 
 	for update := range updates {
-		if update.Message == nil {
+		if update.Message != nil && update.Message.IsCommand() {
+			b.handleMessage(update.Message)
 			continue
 		}
 
-		if !update.Message.IsCommand() {
-			log.Printf("ignoring non-command message from chat %d", update.Message.Chat.ID)
-			continue
+		// handle button clicks
+		if update.CallbackQuery != nil {
+			b.handleCallback(update.CallbackQuery)
 		}
-
-		b.handleMessage(update.Message)
 	}
 }

@@ -18,8 +18,9 @@ type Storage interface {
 	GetStudents() ([]model.Student, error)
 	DeleteStudent(id int) error
 	LinkStudent(studentID int, telegramID int64) error
-	GetStudentByTelegramID(telegramID int64) (*model.Student, error)
+	GetStudentByTelegramID(telegramID int64) (*model.Student, error) // external tg id of student
 	SetLessonPrice(studentID int, price float64) error
+	GetStudentByID(id int) (*model.Student, error) // internal id of student
 
 	// Methods for homework management.
 	AddHomework(studentID int, task string) (int, error)
@@ -241,4 +242,12 @@ func (s *Service) ConductLesson(studentID int) (remindPayment bool, err error) {
 	// check if only 1 lesson remains after marking this one
 	remaining := pkg.TotalLessons - pkg.UsedLessons - 1
 	return remaining == 1, nil
+}
+
+// GetStudentByID returns a student by their ID.
+func (s *Service) GetStudentByID(id int) (*model.Student, error) {
+	if id <= 0 {
+		return nil, fmt.Errorf("student ID must be greater than zero")
+	}
+	return s.storage.GetStudentByID(id)
 }
